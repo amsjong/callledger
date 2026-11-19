@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>CallLedger — on-chain market calls by Agent ID holders</title>
+    <meta
+      name="description"
+      content="A public, on-chain record of market calls. Not financial advice. This app never touches your funds."
+    />
+    <!-- No external fonts, no CDN, no analytics: everything below is served from this origin. -->
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <div id="app">
+      <noscript>
+        <p style="padding: 1rem">
+          CallLedger needs JavaScript to read the chain. The underlying data is on BSC and can be
+          read directly from the contract at
+          <code>0x286eBa3895fdcb3534E2F7c28a36d622650A2528</code>.
+        </p>
+      </noscript>
+      <p style="padding: 1rem; color: #9aa">Loading CallLedger…</p>
+    </div>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
