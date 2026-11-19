@@ -1,0 +1,16 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.24"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10000
+fs_permissions = [{ access = "read", path = "../deployer" }]
+
+[rpc_endpoints]
+bsc = "https://bsc-dataseed.bnbchain.org"
+bsc_testnet = "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+
+[etherscan]
+bsc = { key = "${ETHERSCAN_API_KEY}", chain = 56 }

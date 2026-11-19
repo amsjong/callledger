@@ -1,0 +1,8 @@
+deployer/
+.env
+*.env
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+**/broadcast/*/*/run-*.json
+*.key
