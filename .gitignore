@@ -9,3 +9,7 @@ contracts/broadcast/
 cc_*.log
 cc_prompt.txt
 run_cc.sh
+.claude-home/
+cc_*.txt
+.claude-home/
+scorer/node_modules/
