@@ -11,7 +11,8 @@ import {
     RevertingPool,
     ShortReturnPool,
     DirtyWordPool,
-    GasBurnerPool
+    GasBurnerPool,
+    CostlyPool
 } from "./mocks/Mocks.sol";
 
 contract CallLedgerTest is Test {
@@ -77,6 +78,13 @@ contract CallLedgerTest is Test {
         new CallLedger(aid, address(0), address(v3f));
         vm.expectRevert(CallLedger.ZeroAddress.selector);
         new CallLedger(aid, address(v2f), address(0));
+    }
+
+    /// One address for both factories would make every v3 pool permanently unclassifiable.
+    function test_ConstructorRejectsIdenticalFactories() public {
+        vm.expectRevert(CallLedger.SameFactory.selector);
+        new CallLedger(aid, address(v2f), address(v2f));
+        new CallLedger(aid, address(v2f), address(v3f)); // distinct is fine
     }
 
     function test_HolderCommitStoresEverything() public {
@@ -232,6 +240,34 @@ contract CallLedgerTest is Test {
         uint256 before = gasleft();
         assertEq(ledger.poolKindOf(token, burner), 0);
         assertLt(before - gasleft(), 300_000);
+    }
+
+    /// `poolKindOf` must never silently answer 0 for a pool that really is canonical just because the caller
+    /// was stingy with gas: under the 63/64 rule it either gets its full probe budget or reverts.
+    /// Pre-fix, gas limits in the ~21k-25k band returned a confident, wrong 0.
+    function test_ProbeNeverFalseNegativeUnderTightGas() public {
+        address pool = address(new CostlyPool(address(v2f), token, quote));
+        v2f.setPair(token, quote, pool); // the factory really does map the pair back to it: canonical
+        assertEq(ledger.poolKindOf(token, pool), 1); // the truth, with plenty of gas
+
+        bytes memory cd = abi.encodeCall(CallLedger.poolKindOf, (token, pool));
+        uint256 answered;
+        for (uint256 g = 5_000; g <= 400_000; g += 1_000) {
+            (bool ok, bytes memory ret) = address(ledger).staticcall{gas: g}(cd);
+            if (!ok) continue; // reverted (out of gas, or ProbeGasTooLow): acceptable, never a wrong answer
+            assertEq(ret.length, 32);
+            assertEq(abi.decode(ret, (uint256)), 1, "false negative: canonical pool reported as 0");
+            answered++;
+        }
+        assertGt(answered, 0); // the scan really did reach the succeeding range
+    }
+
+    /// The explicit error when the caller cannot fund even the first probe.
+    function test_ProbeGasTooLow() public view {
+        bytes memory cd = abi.encodeCall(CallLedger.poolKindOf, (token, v2pool));
+        (bool ok, bytes memory ret) = address(ledger).staticcall{gas: 40_000}(cd);
+        assertFalse(ok);
+        assertEq(bytes4(ret), CallLedger.ProbeGasTooLow.selector);
     }
 
     function test_PoolKindOfZeroAddresses() public view {
@@ -505,6 +541,65 @@ contract CallLedgerTest is Test {
         vm.expectRevert(CallLedger.NotFollowing.selector);
         ledger.unfollow(bob);
         vm.stopPrank();
+    }
+
+    // ---------------- the gate must not strand an in-flight obligation
+    /// An Agent ID that lapses, is burned, or whose registry stops answering mid-horizon must not turn an
+    /// honest sealed call into a forfeit: `reveal` is authenticated by the commit itself, not by the gate.
+    function test_RevealSurvivesLosingAgentId() public {
+        (uint256 id,) = _commit(alice, v2pool, 1, H, salt);
+        aid.mint(alice, ""); // Agent ID revoked / expired: balanceOf -> 0
+        assertEq(aid.balanceOf(alice), 0);
+
+        vm.warp(block.timestamp + H);
+        vm.prank(alice);
+        ledger.reveal(id, token, v2pool, 1, salt);
+        assertEq(uint8(ledger.getCall(id).status), uint8(CallLedger.Status.Revealed));
+        assertEq(ledger.getAgent(alice).reveals, 1);
+        assertEq(ledger.getAgent(alice).handle, "alice"); // snapshot from the commit is untouched
+
+        // ...but the gate still holds for making *new* calls
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(CallLedger.NotAgentHolder.selector, alice));
+        ledger.commit(keccak256("new"), H);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(CallLedger.NotAgentHolder.selector, alice));
+        ledger.commitOpen(token, v2pool, 1, H);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(CallLedger.NotAgentHolder.selector, alice));
+        ledger.follow(bob);
+    }
+
+    /// Ungating `reveal` must not weaken it: a non-holder who did not commit still gets nowhere.
+    function test_UngatedRevealIsStillOnlyTheCommitter() public {
+        (uint256 id,) = _commit(alice, v2pool, 1, H, salt);
+        vm.warp(block.timestamp + H);
+        vm.prank(eve); // never held an Agent ID, and knows the full preimage
+        vm.expectRevert(CallLedger.NotCommitter.selector);
+        ledger.reveal(id, token, v2pool, 1, salt);
+    }
+
+    /// Nobody should be stuck following forever because their own Agent ID lapsed.
+    function test_UnfollowSurvivesLosingAgentId() public {
+        vm.prank(alice);
+        ledger.follow(bob);
+        aid.mint(alice, "");
+        vm.prank(alice);
+        ledger.unfollow(bob);
+        assertFalse(ledger.isFollowing(alice, bob));
+        assertEq(ledger.getAgent(bob).followers, 0);
+        assertEq(ledger.getAgent(alice).following, 0);
+    }
+
+    /// Ungating `unfollow` only ever removes the caller's own follow.
+    function test_UngatedUnfollowTouchesNothingElse() public {
+        vm.prank(alice);
+        ledger.follow(bob);
+        vm.prank(eve);
+        vm.expectRevert(CallLedger.NotFollowing.selector);
+        ledger.unfollow(bob);
+        assertEq(ledger.getAgent(bob).followers, 1);
+        assertTrue(ledger.isFollowing(alice, bob));
     }
 
     function test_HandleSnapshotIsSticky() public {

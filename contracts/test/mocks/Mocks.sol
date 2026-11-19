@@ -118,6 +118,44 @@ contract DirtyWordPool {
     }
 }
 
+/// @notice Answers *honestly*, but every getter costs ~20k gas (as a pool behind a proxy, or one that lazily
+///         initialises, would). Registered as canonical via `MockV2Factory.setPair`, it is the case where a
+///         gas-starved probe could otherwise be misread as "this pool is not canonical".
+contract CostlyPool {
+    address private immutable f;
+    address private immutable t0;
+    address private immutable t1;
+
+    constructor(address f_, address a, address b) {
+        f = f_;
+        t0 = a;
+        t1 = b;
+    }
+
+    function _burn() private view {
+        uint256 start = gasleft();
+        uint256 x = 1;
+        while (start - gasleft() < 20_000) {
+            x = uint256(keccak256(abi.encode(x)));
+        }
+    }
+
+    function factory() external view returns (address) {
+        _burn();
+        return f;
+    }
+
+    function token0() external view returns (address) {
+        _burn();
+        return t0;
+    }
+
+    function token1() external view returns (address) {
+        _burn();
+        return t1;
+    }
+}
+
 /// @notice Burns every drop of gas it is given, then out-of-gases. Proves the probe gas cap contains it.
 contract GasBurnerPool {
     function factory() external view returns (address) {

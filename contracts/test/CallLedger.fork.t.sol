@@ -134,6 +134,51 @@ contract CallLedgerForkTest is Test {
         assertEq(ledger.poolKindOf(WBNB, fake3), 0);
     }
 
+    /// The 60k per-probe cap has to be comfortably enough for the *real* Pancake getters, because a
+    /// canonical pool is always Pancake's own fixed bytecode and this contract is immutable. Measure it.
+    function test_Fork_RealProbesAreFarInsideTheGasCap() public view {
+        uint256 g0 = gasleft();
+        assertEq(ledger.poolKindOf(WBNB, WBNB_USDT_V2), 1);
+        uint256 usedV2 = g0 - gasleft();
+
+        g0 = gasleft();
+        assertEq(ledger.poolKindOf(USDT, WBNB_USDT_V3_500), 2);
+        uint256 usedV3 = g0 - gasleft();
+
+        console2.log("poolKindOf gas: v2", usedV2, "v3", usedV3);
+        // v2 takes 4 probes, v3 takes 5; all of them together must stay well under a single probe's budget
+        assertLt(usedV2, 60_000);
+        assertLt(usedV3, 60_000);
+
+        // and a caller who funds the probes gets the truth, not a gas-starved 0
+        assertEq(ledger.poolKindOf{gas: 400_000}(WBNB, WBNB_USDT_V2), 1);
+        assertEq(ledger.poolKindOf{gas: 400_000}(USDT, WBNB_USDT_V3_500), 2);
+    }
+
+    /// A real holder whose Agent ID stops answering mid-horizon must still be able to close out an honest
+    /// sealed call instead of being recorded as a forfeiter.
+    function test_Fork_RevealSurvivesAgentIdGoingAway() public {
+        bytes32 salt = keccak256("lapsed");
+        bytes32 hash = ledger.computeHash(holder, WBNB, WBNB_USDT_V2, 2, 1 days, salt);
+        vm.prank(holder);
+        uint256 id = ledger.commit(hash, 1 days);
+
+        // the registry now reports the holder as holding nothing (expiry / burn / broken registry)
+        vm.mockCall(address(AGENT_ID), abi.encodeCall(IAgentID.balanceOf, (holder)), abi.encode(uint256(0)));
+        assertEq(AGENT_ID.balanceOf(holder), 0);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(holder);
+        ledger.reveal(id, WBNB, WBNB_USDT_V2, 2, salt);
+        assertEq(uint8(ledger.getCall(id).status), uint8(CallLedger.Status.Revealed));
+        assertFalse(ledger.isForfeited(id));
+
+        // new calls are still gated
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(CallLedger.NotAgentHolder.selector, holder));
+        ledger.commitOpen(WBNB, WBNB_USDT_V2, 1, 1 days);
+    }
+
     function test_Fork_NonHolderReverts() public {
         address rando = makeAddr("rando-no-agent-id");
         assertEq(AGENT_ID.balanceOf(rando), 0);

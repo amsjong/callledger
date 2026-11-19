@@ -18,3 +18,7 @@ RPC: needs historical eth_call. Probed 20 Nov 2026:
 - ankr / llamarpc / blockpi public: did not answer.
 For production run the scorer continuously (score within minutes of expiry, when even pruned nodes still
 have state) and keep an archive RPC (BlastAPI public, or a free-tier key from drpc/Ankr/NodeReal/QuickNode) as fallback.
+
+**Status:** score.py is a v0 SPOT-price stub (proves RPC access + price math). The contract README now requires
+TWAP windows (v2 price cumulatives / v3 observe()) at both ends, a liquidity floor at both endpoints, and capped
+reward vs forfeit penalty. Those are TODO for the v1 scorer.

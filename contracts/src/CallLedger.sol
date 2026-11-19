@@ -30,11 +30,18 @@ interface IV3Factory {
 ///         - sealed: `commit` a hash, then `reveal` after the horizon or forfeit the call;
 ///         - open:   `commitOpen` publishes the call immediately for live followers.
 ///         Every call must name a token and a *canonical* PancakeSwap v2 pair or v3 pool that actually
-///         contains that token, verified on-chain (see `_checkPool`). Scoring happens off-chain from
-///         public chain data only (pool state at commitBlock and at the first block with
-///         timestamp >= expiryTime), so anyone can recompute every agent's record from logs alone.
+///         contains that token, verified on-chain (see `_checkPool`). Scoring happens off-chain from public
+///         chain data only — the pools' own TWAP oracles over fixed windows anchored at `commitBlock` and
+///         `expiryTime` — so anyone can recompute every agent's record from the logs alone. The ledger
+///         records *what was called and when*; it deliberately takes no view on price. See README
+///         "Scoring spec" for the rules a scorer must enforce that this contract cannot (liquidity floors,
+///         capped rewards vs. forfeit penalties, copy detection).
 /// @dev    No owner, no admin, no payable functions, no token transfers, no approvals.
-///         The only external calls are gas-capped view staticcalls (Agent ID registry, pool, factory).
+///         Every external call is a `view` staticcall. The pool/factory probes are gas-capped and their
+///         failure is swallowed; the Agent ID registry calls are *not* capped, because the registry is the
+///         gate itself — a registry that stops answering must fail closed, not be worked around. The two
+///         functions that discharge an obligation already recorded on-chain (`reveal`, `unfollow`) are
+///         therefore deliberately not gated on the registry: see their docs.
 contract CallLedger {
     // ------------------------------------------------------------------ constants
     uint32 public constant MIN_HORIZON = 1 hours;
@@ -51,6 +58,12 @@ contract CallLedger {
     /// @dev Gas forwarded to each pool/factory probe. Generous for an honest view, tight enough that a
     ///      hostile pool cannot grief the caller by burning the whole gas limit.
     uint256 private constant PROBE_GAS = 60_000;
+
+    /// @dev EIP-150 forwards at most 63/64 of `gasleft()`, so a probe only really receives PROBE_GAS once at
+    ///      least this much gas remains. Below it we revert instead of letting a gas-starved probe be read as
+    ///      "the pool answered wrong": `poolKindOf` must never report 0 for a pool that is in fact canonical.
+    // 64/63 for EIP-150 plus 3k for a cold-account access (2600) and call overhead before forwarding.
+    uint256 private constant PROBE_GAS_FLOOR = (PROBE_GAS * 64) / 63 + 3_000;
 
     enum Status {
         None, // call does not exist
@@ -166,11 +179,16 @@ contract CallLedger {
     error AlreadyFollowing();
     error NotFollowing();
     error PageTooLarge();
+    error SameFactory();
+    error ProbeGasTooLow();
 
     constructor(IAgentID agentId_, address v2Factory_, address v3Factory_) {
         if (address(agentId_) == address(0) || v2Factory_ == address(0) || v3Factory_ == address(0)) {
             revert ZeroAddress();
         }
+        // The two factories must differ: `poolKindOf` resolves the kind from `factory()`, so deploying with
+        // one address for both would make every v3 pool permanently unclassifiable in an immutable contract.
+        if (v2Factory_ == v3Factory_) revert SameFactory();
         agentId = agentId_;
         v2Factory = v2Factory_;
         v3Factory = v3Factory_;
@@ -198,9 +216,12 @@ contract CallLedger {
     }
 
     // ------------------------------------------------------------------ pool sanity
-    /// @dev One gas-capped staticcall returning exactly one word, or `ok == false`. Never reverts, never
-    ///      bubbles the callee's returndata, so hostile pools degrade to a clean `BadPool`.
+    /// @dev One gas-capped staticcall returning exactly one word, or `ok == false`. Never bubbles the
+    ///      callee's returndata, so hostile pools degrade to a clean `BadPool`. The only way it reverts is
+    ///      `ProbeGasTooLow`, i.e. the *caller* left too little gas for the probe to be answered at all —
+    ///      which is reported rather than silently conflated with a pool that answered wrong.
     function _probeWord(address target, bytes memory cd) private view returns (bool ok, bytes32 word) {
+        if (gasleft() < PROBE_GAS_FLOOR) revert ProbeGasTooLow();
         assembly ("memory-safe") {
             let out := mload(0x40)
             mstore(0x40, add(out, 0x20))
@@ -311,7 +332,12 @@ contract CallLedger {
     /// @notice Reveal a sealed call after its horizon has passed and before the reveal window closes.
     /// @dev    The revealed pool must pass `_checkPool`; if it does not, the reveal reverts and the call
     ///         forfeits when the window closes.
-    function reveal(uint256 callId, address token, address pool, uint8 direction, bytes32 salt) external onlyAgent {
+    ///         Deliberately **not** `onlyAgent`: the only caller that can get past the checks below is the
+    ///         committer themselves (`c.agent == msg.sender` *and* a preimage of their own bound hash), who
+    ///         necessarily held an Agent ID at commit time and was already `_touch`ed then. Re-checking the
+    ///         registry here would add no authentication and would let an Agent ID that expires, is burned,
+    ///         or whose registry stops answering mid-horizon turn an honest in-flight call into a forfeit.
+    function reveal(uint256 callId, address token, address pool, uint8 direction, bytes32 salt) external {
         Call storage c = _get(callId);
         if (c.agent != msg.sender) revert NotCommitter();
         if (c.mode != Mode.Sealed) revert NotSealed();
@@ -412,7 +438,11 @@ contract CallLedger {
         emit Followed(msg.sender, agent);
     }
 
-    function unfollow(address agent) external onlyAgent {
+    /// @notice Drop a follow. Deliberately **not** `onlyAgent`: the `isFollowing` flag is the authentication
+    ///         (it can only have been set by this same address via `follow`, which did gate on the registry
+    ///         and `_touch`ed them), and nobody should be stuck following forever because their own Agent ID
+    ///         lapsed. Only ever removes the caller's own follow.
+    function unfollow(address agent) external {
         if (!isFollowing[msg.sender][agent]) revert NotFollowing();
         isFollowing[msg.sender][agent] = false;
         _agents[agent].followers -= 1;
