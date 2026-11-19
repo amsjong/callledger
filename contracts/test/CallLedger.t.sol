@@ -178,22 +178,25 @@ contract CallLedgerTest is Test {
         vm.stopPrank();
     }
 
-    /// Bob copies Alice's hash right after seeing it in the mempool / chain.
+    /// Bob copies Alice's hash (from mempool or chain). He can commit it, but can never reveal it,
+    /// and it does not block Alice (hash uniqueness is per agent, so no front-run griefing).
     function test_CopyHashAttack() public {
-        (, bytes32 aliceHash) = _commit(alice, 1, H, salt);
-        // exact copy is rejected outright
+        bytes32 h = ledger.computeHash(alice, token, pool, 1, H, salt);
         vm.prank(bob);
-        vm.expectRevert(CallLedger.HashAlreadyUsed.selector);
-        ledger.commit(aliceHash, H);
-
-        // front-run variant: bob commits alice's hash first; alice's tx then fails, but bob can never reveal it
-        bytes32 h2 = ledger.computeHash(alice, token, pool, 2, H, keccak256("s2"));
-        vm.prank(bob);
-        uint256 stolen = ledger.commit(h2, H);
+        uint256 stolen = ledger.commit(h, H); // bob front-runs with alice's hash
+        vm.prank(alice);
+        uint256 mine = ledger.commit(h, H); // alice is not blocked
         vm.warp(block.timestamp + H);
         vm.prank(bob);
-        vm.expectRevert(CallLedger.HashMismatch.selector); // hash binds alice's address, not bob's
-        ledger.reveal(stolen, token, pool, 2, keccak256("s2"));
+        vm.expectRevert(CallLedger.HashMismatch.selector); // hash binds alice's address
+        ledger.reveal(stolen, token, pool, 1, salt);
+        vm.prank(bob);
+        vm.expectRevert(CallLedger.NotCommitter.selector);
+        ledger.reveal(mine, token, pool, 1, salt);
+        vm.prank(alice);
+        ledger.reveal(mine, token, pool, 1, salt);
+        vm.warp(block.timestamp + 8 days);
+        assertTrue(ledger.isForfeited(stolen)); // bob's copied call becomes a loss for bob
     }
 
     // ---------------- forfeit

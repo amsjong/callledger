@@ -64,7 +64,7 @@ contract CallLedger {
     Call[] private _calls; // callId = index
     mapping(address => Agent) private _agents;
     mapping(address => uint256[]) private _callsOf;
-    mapping(bytes32 => bool) public hashUsed;
+    mapping(address => mapping(bytes32 => bool)) public hashUsed; // per agent: a copied hash cannot block the owner
     mapping(address => mapping(address => bool)) public isFollowing; // follower => agent => bool
 
     // ------------------------------------------------------------------ events
@@ -154,9 +154,9 @@ contract CallLedger {
     function commit(bytes32 commitHash, uint32 horizonSeconds) external onlyAgent returns (uint256 callId) {
         if (horizonSeconds < MIN_HORIZON || horizonSeconds > MAX_HORIZON) revert BadHorizon(horizonSeconds);
         if (commitHash == bytes32(0)) revert ZeroHash();
-        if (hashUsed[commitHash]) revert HashAlreadyUsed();
+        if (hashUsed[msg.sender][commitHash]) revert HashAlreadyUsed();
 
-        hashUsed[commitHash] = true;
+        hashUsed[msg.sender][commitHash] = true;
         callId = _calls.length;
         uint64 nowTs = uint64(block.timestamp);
         uint64 expiry = nowTs + horizonSeconds;
