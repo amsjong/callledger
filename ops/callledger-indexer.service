@@ -1,0 +1,10 @@
+[Unit]
+Description=CallLedger indexer + static publish
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/levi/ops/index_and_publish.sh
+TimeoutStartSec=540
+Nice=10

@@ -1,0 +1,6 @@
+{
+  "name": "callledger-site",
+  "private": true,
+  "type": "module",
+  "description": "Marks every .js under site/ as an ES module so node (the tests) and the browser agree. Not used at runtime by the static site."
+}
