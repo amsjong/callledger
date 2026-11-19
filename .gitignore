@@ -6,3 +6,6 @@ contracts/cache/
 contracts/broadcast/
 **/broadcast/*/*/run-*.json
 *.key
+cc_*.log
+cc_prompt.txt
+run_cc.sh
