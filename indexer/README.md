@@ -133,7 +133,7 @@ so a partial run leaves the published data exactly as it was and the next run re
 Cron, every 5 minutes, with a log:
 
 ```cron
-*/5 * * * * cd /home/ubuntu/levi && /usr/bin/python3 indexer/index.py --once >> /var/log/callledger-indexer.log 2>&1
+*/5 * * * * cd /home/levi/levi && /usr/bin/python3 indexer/index.py --once >> /var/log/callledger-indexer.log 2>&1
 ```
 
 The lock file makes an overlapping run a no-op, so a slow pass cannot pile up. Alternatively run one

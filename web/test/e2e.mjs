@@ -39,7 +39,7 @@ const REPO = join(HERE, "..", "..");
 const PORT = Number(process.env.ANVIL_PORT || 8547);
 const RPC = `http://127.0.0.1:${PORT}`;
 const FORK_URL = process.env.FORK_RPC_URL || "https://bsc-dataseed.bnbchain.org";
-const ANVIL = process.env.ANVIL_BIN || join(process.env.HOME || "/home/ubuntu", ".foundry", "bin", "anvil");
+const ANVIL = process.env.ANVIL_BIN || join(process.env.HOME || "/home/levi", ".foundry", "bin", "anvil");
 const PYTHON = process.env.PYTHON_BIN || "python3";
 const KEEP = process.argv.includes("--keep");
 
